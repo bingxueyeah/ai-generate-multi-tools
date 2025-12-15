@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数据表格生成器</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); overflow: hidden; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }
+        .header h1 { font-size: 2.5em; margin-bottom: 10px; }
+        .content { padding: 40px; }
+        .input-section { margin-bottom: 30px; }
+        .input-group { margin-bottom: 20px; }
+        label { display: block; margin-bottom: 8px; font-weight: 600; color: #333; }
+        textarea, input { width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px; font-family: inherit; transition: border-color 0.3s; }
+        textarea:focus, input:focus { outline: none; border-color: #667eea; }
+        textarea { min-height: 150px; resize: vertical; }
+        button { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; padding: 12px 30px; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+        button:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4); }
+        button:active { transform: translateY(0); }
+        .button-group { display: flex; gap: 10px; flex-wrap: wrap; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; background: white; }
+        th, td { padding: 12px; text-align: left; border: 1px solid #e0e0e0; }
+        th { background: #f5f5f5; font-weight: 600; color: #333; }
+        tr:hover { background: #f9f9f9; }
+        .table-container { overflow-x: auto; margin-top: 20px; }
+        .instructions { background: #f0f4ff; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        .instructions h3 { color: #667eea; margin-bottom: 10px; }
+        .instructions ul { margin-left: 20px; color: #666; }
+        .instructions li { margin-bottom: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 数据表格生成器</h1>
+            <p>快速将数据转换为美观的表格</p>
+        </div>
+        <div class="content">
+            <div class="instructions">
+                <h3>使用说明</h3>
+                <ul>
+                    <li>在下方输入数据，每行一条记录，用逗号、制表符或竖线分隔字段</li>
+                    <li>第一行可以作为表头（列名）</li>
+                    <li>点击"生成表格"按钮即可查看结果</li>
+                    <li>可以下载为HTML格式</li>
+                </ul>
+            </div>
+            <div class="input-section">
+                <div class="input-group">
+                    <label for="dataInput">输入数据：</label>
+                    <textarea id="dataInput" placeholder="例如：姓名,年龄,城市,职业\n张三,25,北京,工程师\n李四,30,上海,设计师\n王五,28,广州,产品经理"></textarea>
+                </div>
+                <div class="input-group">
+                    <label for="separator">分隔符：</label>
+                    <select id="separator" style="padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px; width: 200px;">
+                        <option value=",">逗号 (,)</option>
+                        <option value="\t">制表符</option>
+                        <option value="|">竖线 (|)</option>
+                        <option value=";">分号 (;)</option>
+                    </select>
+                </div>
+                <div class="button-group">
+                    <button onclick="generateTable()">生成表格</button>
+                    <button onclick="exportHTML()" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">下载HTML</button>
+                    <button onclick="clearAll()" style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);">清空</button>
+                </div>
+            </div>
+            <div class="table-container" id="tableContainer"></div>
+        </div>
+    </div>
+    <script>
+        let tableData = [];
+        function generateTable() {
+            const input = document.getElementById('dataInput').value.trim();
+            const separator = document.getElementById('separator').value;
+            if (!input) { alert('请输入数据！'); return; }
+            const lines = input.split('\n').filter(line => line.trim());
+            if (lines.length === 0) { alert('数据不能为空！'); return; }
+            let sep = separator === '\t' ? '\t' : separator;
+            tableData = lines.map(line => line.split(sep).map(cell => cell.trim()));
+            const hasHeader = tableData.length > 1;
+            const headers = hasHeader ? tableData[0] : tableData[0].map((_, i) => `列${i + 1}`);
+            const rows = hasHeader ? tableData.slice(1) : [];
+            let html = '<table><thead><tr>';
+            headers.forEach(header => { html += `<th>${escapeHtml(header)}</th>`; });
+            html += '</tr></thead><tbody>';
+            if (hasHeader && rows.length === 0) {
+                html += '<tr><td colspan="' + headers.length + '" style="text-align: center; color: #999;">暂无数据</td></tr>';
+            } else {
+                (hasHeader ? rows : tableData).forEach(row => {
+                    html += '<tr>';
+                    headers.forEach((_, i) => { html += `<td>${escapeHtml(row[i] || '')}</td>`; });
+                    html += '</tr>';
+                });
+            }
+            html += '</tbody></table>';
+            document.getElementById('tableContainer').innerHTML = html;
+        }
+        function sanitizeFilename(str) {
+            return str.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '_').substring(0, 30);
+        }
+        function exportHTML() {
+            if (tableData.length === 0) { alert('请先生成表格！'); return; }
+            const hasHeader = tableData.length > 1;
+            const headers = hasHeader ? tableData[0] : tableData[0].map((_, i) => `列${i + 1}`);
+            const rows = hasHeader ? tableData.slice(1) : tableData;
+            let tableHtml = '<table style="width: 100%; border-collapse: collapse; margin: 20px 0;"><thead><tr>';
+            headers.forEach(header => { tableHtml += `<th style="padding: 12px; text-align: left; border: 1px solid #e0e0e0; background: #f5f5f5; font-weight: 600;">${escapeHtml(header)}</th>`; });
+            tableHtml += '</tr></thead><tbody>';
+            rows.forEach(row => {
+                tableHtml += '<tr>';
+                headers.forEach((_, i) => { tableHtml += `<td style="padding: 12px; text-align: left; border: 1px solid #e0e0e0;">${escapeHtml(row[i] || '')}</td>`; });
+                tableHtml += '</tr>';
+            });
+            tableHtml += '</tbody></table>';
+            const htmlContent = '<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n<title>数据表格</title>\n<style>body { font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif; padding: 20px; background: #f5f5f5; } .container { max-width: 1200px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); } h1 { color: #333; margin-bottom: 20px; }</style>\n</head>\n<body>\n<div class="container">\n<h1>数据表格</h1>\n' + tableHtml + '\n</div>\n</body>\n</html>';
+            const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            const now = new Date();
+            const timestamp = now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0') + '_' + String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0') + String(now.getSeconds()).padStart(2, '0');
+            let filename = '数据表格';
+            if (headers.length > 0 && headers[0] && headers[0].trim()) {
+                filename = sanitizeFilename(headers[0].trim());
+            }
+            filename = filename + '_' + timestamp + '.html';
+            link.download = filename;
+            link.click();
+        }
+        function clearAll() {
+            if (confirm('确定要清空所有数据吗？')) {
+                document.getElementById('dataInput').value = '';
+                document.getElementById('tableContainer').innerHTML = '';
+                tableData = [];
+            }
+        }
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('dataInput').value = '姓名,年龄,城市,职业\n张三,25,北京,工程师\n李四,30,上海,设计师\n王五,28,广州,产品经理';
+        });
+    </script>
+</body>
+</html>

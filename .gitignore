@@ -1,0 +1,93 @@
+# Maven
+target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+
+# IDE - IntelliJ IDEA
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+
+# IDE - Eclipse
+.classpath
+.project
+.settings/
+bin/
+
+# ============================================
+# 敏感信息 - 绝对不能上传到GitHub
+# ============================================
+# 环境变量文件（包含API密钥、密码等）
+.env
+.env.local
+.env.*.local
+*.env
+!env.example
+
+# 配置文件（可能包含敏感信息）
+config.properties
+application.properties
+application-local.properties
+application-*.properties
+!application.properties.example
+
+# 密钥和证书文件
+*.key
+*.pem
+*.p12
+*.jks
+*.keystore
+*.cert
+*.crt
+
+# 备份文件（可能包含敏感信息）
+*.bak
+*.backup
+*~
+
+# ============================================
+# 其他不应该上传的内容
+# ============================================
+# OS系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 编译产物
+*.class
+
+# 日志文件（可能包含敏感信息）
+*.log
+logs/
+
+# 打包文件
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# JVM崩溃日志
+hs_err_pid*
+
+# 临时文件
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# 本地测试数据
+test-data/
+local-data/
