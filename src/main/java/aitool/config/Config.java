@@ -20,11 +20,26 @@ public class Config {
     
     // 默认配置
     private static final Map<String, String> DEFAULTS = new HashMap<String, String>() {{
+        // 豆包配置（主接入点）
         put("DOUBAO_API_KEY", "");
         put("DOUBAO_ENDPOINT_ID", "");
+        put("DOUBAO_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3");
+        
+        // 豆包配置（备用接入点1）
+        put("DOUBAO_API_KEY_2", "");
+        put("DOUBAO_ENDPOINT_ID_2", "");
+        put("DOUBAO_BASE_URL_2", "");
+        
+        // 豆包配置（备用接入点2）
+        put("DOUBAO_API_KEY_3", "");
+        put("DOUBAO_ENDPOINT_ID_3", "");
+        put("DOUBAO_BASE_URL_3", "");
+        
+        // 火山引擎官方配置（兼容旧配置）
         put("VOLC_ACCESSKEY", "");
         put("VOLC_SECRETKEY", "");
-        put("DOUBAO_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3");
+        
+        // 通用配置
         put("USE_AI", "true");
         put("AI_FALLBACK_TO_TEMPLATE", "true");
         put("AI_CONNECT_TIMEOUT", "30");  // 连接超时（秒）
@@ -172,9 +187,13 @@ public class Config {
      * 检查AI配置是否完整
      */
     public static boolean checkAiConfig() {
-        String apiKey = get("DOUBAO_API_KEY");
+        String doubaoApiKey = get("DOUBAO_API_KEY");
         
-        // 检查是否有有效的API密钥配置
-        return apiKey != null && !apiKey.isEmpty();
+        // 检查是否有至少一个有效的API密钥配置
+        String doubaoApiKey2 = Config.get("DOUBAO_API_KEY_2");
+        String doubaoApiKey3 = Config.get("DOUBAO_API_KEY_3");
+        return (doubaoApiKey != null && !doubaoApiKey.isEmpty()) ||
+               (doubaoApiKey2 != null && !doubaoApiKey2.isEmpty()) ||
+               (doubaoApiKey3 != null && !doubaoApiKey3.isEmpty());
     }
 }

@@ -19,6 +19,16 @@ public abstract class AIClient {
     public abstract String generateHtmlTool(String userRequest, String systemPrompt) throws Exception;
     
     /**
+     * 关闭客户端资源
+     */
+    public abstract void shutdown();
+    
+    /**
+     * 获取客户端名称
+     */
+    public abstract String getClientName();
+    
+    /**
      * 获取默认系统提示词
      */
     protected String getDefaultSystemPrompt() {
@@ -84,13 +94,22 @@ class DoubaoClient extends AIClient {
     private final ArkService arkService;
     
     public DoubaoClient(String apiKey, String endpointId, String accessKey, String secretKey) {
+        this(apiKey, endpointId, accessKey, secretKey, null);
+    }
+    
+    public DoubaoClient(String apiKey, String endpointId, String accessKey, String secretKey, String customBaseUrl) {
         this.apiKey = apiKey;
         this.endpointId = endpointId;
-        this.baseUrl = Config.get("DOUBAO_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3");
+        // 如果提供了自定义baseUrl，使用自定义的；否则使用配置的；最后使用默认值
+        if (customBaseUrl != null && !customBaseUrl.isEmpty()) {
+            this.baseUrl = customBaseUrl;
+        } else {
+            this.baseUrl = Config.get("DOUBAO_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3");
+        }
         
         // 验证API密钥
         if (apiKey == null || apiKey.isEmpty()) {
-            throw new IllegalArgumentException("请配置API密钥（DOUBAO_API_KEY）");
+            throw new IllegalArgumentException("请配置API密钥");
         }
         
         // 创建ArkService实例
@@ -170,9 +189,7 @@ class DoubaoClient extends AIClient {
         return out.getText();
     }
     
-    /**
-     * 清理资源
-     */
+    @Override
     public void shutdown() {
         if (arkService != null) {
             try {
@@ -181,5 +198,19 @@ class DoubaoClient extends AIClient {
                 // 忽略关闭时的异常
             }
         }
+    }
+    
+    private String clientName = "豆包(Doubao)";
+    
+    /**
+     * 设置客户端名称（用于区分不同的接入点）
+     */
+    public void setClientName(String name) {
+        this.clientName = name;
+    }
+    
+    @Override
+    public String getClientName() {
+        return clientName;
     }
 }
