@@ -39,6 +39,69 @@ public class AIFailoverManager {
     }
     
     /**
+     * 通用AI调用方法（不验证HTML格式）
+     * @param userRequest 用户请求
+     * @param systemPrompt 系统提示词（可选）
+     * @return AI返回的内容
+     * @throws Exception 所有客户端都失败时抛出异常
+     */
+    public String generateText(String userRequest, String systemPrompt) throws Exception {
+        List<Exception> errors = new ArrayList<>();
+        int startIndex = currentIndex.get();
+        int attempts = 0;
+        
+        // 尝试所有客户端（从当前索引开始，循环一圈）
+        while (attempts < clients.size()) {
+            int index = (startIndex + attempts) % clients.size();
+            AIClient client = clients.get(index);
+            
+            try {
+                System.out.println("🔄 尝试使用 " + client.getClientName() + " 调用AI...");
+                // 直接调用底层方法，不验证格式
+                String result = callAIClientDirectly(client, userRequest, systemPrompt);
+                
+                // 基本验证：确保有返回内容
+                if (result != null && !result.trim().isEmpty()) {
+                    System.out.println("✓ " + client.getClientName() + " 调用成功！");
+                    // 更新当前索引，下次优先使用成功的客户端
+                    currentIndex.set(index);
+                    return result;
+                } else {
+                    throw new Exception("AI返回内容为空");
+                }
+            } catch (Exception e) {
+                String errorMsg = e.getMessage();
+                System.out.println("⚠ " + client.getClientName() + " 调用失败: " + errorMsg);
+                
+                errors.add(new Exception(client.getClientName() + ": " + errorMsg, e));
+                attempts++;
+                
+                if (attempts < clients.size()) {
+                    System.out.println("🔄 自动切换到下一个AI服务...");
+                }
+            }
+        }
+        
+        // 所有客户端都失败了
+        StringBuilder errorSummary = new StringBuilder();
+        errorSummary.append("所有AI服务调用均失败。已尝试的客户端: ").append(clientNames).append("\n");
+        errorSummary.append("失败详情:\n");
+        for (int i = 0; i < errors.size(); i++) {
+            errorSummary.append("  ").append(i + 1).append(". ").append(errors.get(i).getMessage()).append("\n");
+        }
+        
+        throw new Exception(errorSummary.toString());
+    }
+    
+    /**
+     * 直接调用AI客户端（不进行HTML验证）
+     */
+    private String callAIClientDirectly(AIClient client, String userRequest, String systemPrompt) throws Exception {
+        // 直接调用generateText方法（不验证HTML格式）
+        return client.generateText(userRequest, systemPrompt);
+    }
+    
+    /**
      * 根据用户需求生成HTML工具（带容灾机制）
      * @param userRequest 用户请求
      * @param systemPrompt 系统提示词（可选）

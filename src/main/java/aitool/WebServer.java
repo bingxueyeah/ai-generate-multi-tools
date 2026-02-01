@@ -4,13 +4,16 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import aitool.service.FilenameGenerator;
 import aitool.service.HtmlGenerator;
+import aitool.service.ToolCategoryClassifier;
 
 import java.io.*;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpHandler;
@@ -25,7 +28,14 @@ public class WebServer {
     private static final String OUTPUT_DIR = "output";
     private static final Gson gson = new Gson();
     private static HtmlGenerator generator;
+    private static ToolCategoryClassifier categoryClassifier;
     private static File outputDir;
+    
+    // 自定义线程池：用于并发执行分类和HTML生成任务
+    // 核心线程数：2（分类和HTML生成各一个）
+    // 最大线程数：10（支持多个并发请求）
+    // 线程空闲时间：60秒
+    private static ExecutorService taskExecutor;
     
     public static void main(String[] args) {
         int port = DEFAULT_PORT;
@@ -44,6 +54,46 @@ public class WebServer {
         // 初始化生成器
         generator = HtmlGenerator.getInstance();
         
+        // 初始化分类器
+        categoryClassifier = new ToolCategoryClassifier();
+        
+        // 初始化自定义线程池
+        TimeUnit  liveTime =  TimeUnit.MILLISECONDS;
+        taskExecutor = new ThreadPoolExecutor(
+                5,
+                10,
+                3000,
+                liveTime,
+                new ArrayBlockingQueue<>(300),
+                new ThreadFactory() {
+                    private final AtomicInteger threadNumber = new AtomicInteger(1);
+
+                    @Override
+                    public Thread newThread(Runnable r) {
+                        Thread t = new Thread(r, "AI-Task-Thread-" + threadNumber.getAndIncrement());
+                        t.setDaemon(false); // 非守护线程
+                        return t;
+                    }
+            });
+        System.out.println("✓ 自定义线程池已初始化（核心线程数: 5，最大线程数: 10）");
+        
+        // 添加关闭钩子，确保线程池正确关闭
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            if (taskExecutor != null && !taskExecutor.isShutdown()) {
+                System.out.println("正在关闭线程池...");
+                taskExecutor.shutdown();
+                try {
+                    if (!taskExecutor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                        taskExecutor.shutdownNow();
+                    }
+                } catch (InterruptedException e) {
+                    taskExecutor.shutdownNow();
+                    Thread.currentThread().interrupt();
+                }
+                System.out.println("✓ 线程池已关闭");
+            }
+        }));
+        
         // 确保输出目录存在（使用绝对路径）
         String projectRoot = System.getProperty("user.dir");
         outputDir = new File(projectRoot, OUTPUT_DIR);
@@ -55,11 +105,11 @@ public class WebServer {
         }
         System.out.println("输出目录: " + outputDir.getAbsolutePath());
         
+        // 创建4个分类文件夹
+        createCategoryFolders();
+        
         try {
             HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
-            
-            // 设置线程池
-            server.setExecutor(Executors.newFixedThreadPool(10));
             
             // 静态文件服务 - 前端页面
             server.createContext("/", new StaticFileHandler());
@@ -83,6 +133,24 @@ public class WebServer {
         } catch (IOException e) {
             System.err.println("启动服务器失败: " + e.getMessage());
             e.printStackTrace();
+        }
+    }
+    
+    /**
+     * 创建4个分类文件夹
+     */
+    private static void createCategoryFolders() {
+        ToolCategoryClassifier.ToolCategory[] categories = ToolCategoryClassifier.ToolCategory.values();
+        for (ToolCategoryClassifier.ToolCategory category : categories) {
+            File categoryDir = new File(outputDir, category.getChineseName());
+            if (!categoryDir.exists()) {
+                boolean created = categoryDir.mkdirs();
+                if (created) {
+                    System.out.println("✓ 已创建分类文件夹: " + category.getChineseName());
+                } else {
+                    System.err.println("警告: 无法创建分类文件夹: " + category.getChineseName());
+                }
+            }
         }
     }
     
@@ -160,9 +228,90 @@ public class WebServer {
                     return;
                 }
                 
-                // 生成HTML工具
-                String htmlContent = generator.generateTool(userRequest);
+                // 步骤1: 先检查是否是简单示例模板（优先检查，避免不必要的文件查找和AI调用）
+                System.out.println("🔍 步骤1: 检查是否是简单示例模板...");
+                long templateStartTime = System.currentTimeMillis();
+                String simpleTemplate = generator.checkSimpleExampleTemplate(userRequest);
+                long templateEndTime = System.currentTimeMillis();
                 
+                ToolCategoryClassifier.ToolCategory category;
+                String htmlContent;
+                
+                if (simpleTemplate != null) {
+                    // 如果是简单示例模板，直接返回
+                    System.out.println("✓ 检测到简单示例需求，直接返回模板 (检查耗时: " + (templateEndTime - templateStartTime) + "ms)");
+                    htmlContent = simpleTemplate;
+                    
+                    // 对于简单示例，需要确定其分类（用于返回正确的分类信息）
+                    category = determineCategoryFromSimpleExample(userRequest);
+                } else {
+                    // 步骤2: 如果不是简单示例，检查是否已生成过
+                    System.out.println("✓ 不是简单示例模板，检查是否已生成过...");
+                    long checkStartTime = System.currentTimeMillis();
+                    String existingHtml = generator.findExistingFile(userRequest);
+                    long checkEndTime = System.currentTimeMillis();
+                    
+                    if (existingHtml != null) {
+                        // 如果已存在，直接返回，跳过分类和生成
+                        System.out.println("✓ 找到已生成的文件 (检查耗时: " + (checkEndTime - checkStartTime) + "ms)");
+                        htmlContent = existingHtml;
+                        
+                        // 对于已存在的文件，需要确定其分类（用于返回正确的分类信息）
+                        // 可以通过文件名或文件路径来判断分类
+                        category = determineCategoryFromExistingFile(userRequest);
+                    } else {
+                        // 步骤3: 如果没找到，再执行分类和生成（可以并发执行）
+                        System.out.println("✓ 未找到已生成的文件，开始分类和生成...");
+                    long initTime = System.currentTimeMillis();
+                    
+                    // 创建两个并发任务（使用自定义线程池）
+                    CompletableFuture<ToolCategoryClassifier.ToolCategory> categoryFuture = 
+                        CompletableFuture.supplyAsync(() -> {
+                            System.out.println("🔍 [线程1] 正在分析用户需求，进行分类...");
+                            long cStartTime = System.currentTimeMillis();
+                            try {
+                                ToolCategoryClassifier.ToolCategory result = categoryClassifier.classify(userRequest);
+                                long cEndTime = System.currentTimeMillis();
+                                System.out.println("✓ [线程1] 分类结果: " + result.getChineseName() + " (耗时: " + (cEndTime - cStartTime) + "ms)");
+                                return result;
+                            } catch (Exception e) {
+                                System.err.println("⚠ [线程1] 分类失败: " + e.getMessage() + "，使用默认分类");
+                                return ToolCategoryClassifier.ToolCategory.PROCESSING; // 默认使用处理工具
+                            }
+                        }, taskExecutor);
+                    
+                    CompletableFuture<String> htmlFuture = 
+                        CompletableFuture.supplyAsync(() -> {
+                            System.out.println("🤖 [线程2] 正在生成HTML工具...");
+                            long hStartTime = System.currentTimeMillis();
+                            try {
+                                // 跳过已存在文件的检查，因为我们已经检查过了
+                                String result = generator.generateTool(userRequest, true);
+                                long hEndTime = System.currentTimeMillis();
+                                System.out.println("✓ [线程2] HTML生成完成 (耗时: " + (hEndTime - hStartTime) + "ms)");
+                                return result;
+                            } catch (Exception e) {
+                                System.err.println("⚠ [线程2] HTML生成失败: " + e.getMessage());
+                                throw new RuntimeException("HTML生成失败: " + e.getMessage(), e);
+                            }
+                        }, taskExecutor);
+                    
+                    // 等待两个任务都完成
+                    try {
+                        category = categoryFuture.get();
+                        htmlContent = htmlFuture.get();
+                        long endTime = System.currentTimeMillis();
+                        long allTime = endTime - initTime;
+                        System.out.println("✓ 并发处理完成，总耗时: " + allTime + "ms");
+                    } catch (InterruptedException | ExecutionException e) {
+                        Throwable cause = e.getCause();
+                        if (cause instanceof RuntimeException) {
+                            throw (RuntimeException) cause;
+                        }
+                        throw new Exception("并发处理失败: " + e.getMessage(), e);
+                    }
+                    }
+                }
                 // 确保HTML内容有效
                 if (htmlContent == null || htmlContent.trim().isEmpty()) {
                     sendResponse(exchange, 500, "application/json", 
@@ -189,7 +338,16 @@ public class WebServer {
                     }
                 }
                 
-                File filepath = new File(outputDir, filename);
+                // 根据分类结果，将文件保存到对应的分类文件夹
+                File categoryDir = new File(outputDir, category.getChineseName());
+                if (!categoryDir.exists()) {
+                    boolean created = categoryDir.mkdirs();
+                    if (!created) {
+                        throw new IOException("无法创建分类文件夹: " + categoryDir.getAbsolutePath());
+                    }
+                }
+                
+                File filepath = new File(categoryDir, filename);
                 
                 // 保存文件（使用UTF-8编码避免乱码）
                 try (OutputStreamWriter writer = new OutputStreamWriter(
@@ -211,6 +369,8 @@ public class WebServer {
                 response.addProperty("filename", filename);
                 response.addProperty("filepath", filepath.getAbsolutePath());
                 response.addProperty("htmlContent", htmlContent);
+                response.addProperty("category", category.getChineseName());
+                response.addProperty("categoryEn", category.getEnglishName());
                 
                 sendResponse(exchange, 200, "application/json; charset=utf-8", 
                     gson.toJson(response));
@@ -232,7 +392,7 @@ public class WebServer {
         public void handle(HttpExchange exchange) throws IOException {
             String query = exchange.getRequestURI().getQuery();
             if (query == null) {
-                sendResponse(exchange, 400, "text/plain", "Missing file parameter");
+                sendResponse(exchange, 400, "text/plain; charset=utf-8", "Missing file parameter");
                 return;
             }
             
@@ -247,7 +407,7 @@ public class WebServer {
             }
             
             if (filename == null || filename.isEmpty()) {
-                sendResponse(exchange, 400, "text/plain", "Missing file parameter");
+                sendResponse(exchange, 400, "text/plain; charset=utf-8", "Missing file parameter");
                 return;
             }
             
@@ -263,9 +423,12 @@ public class WebServer {
                 }
             }
             
-            File file = new File(OUTPUT_DIR, filename);
-            if (!file.exists() || !file.isFile()) {
-                sendResponse(exchange, 404, "text/plain", "File not found: " + filename);
+            // 在所有分类文件夹下递归查找文件
+            File file = findFileInAllCategories(filename);
+            if (file == null || !file.exists() || !file.isFile()) {
+                // 使用UTF-8编码错误信息，避免乱码
+                String errorMsg = "File not found: " + filename;
+                sendResponse(exchange, 404, "text/plain; charset=utf-8", errorMsg);
                 return;
             }
             
@@ -309,6 +472,52 @@ public class WebServer {
             try (OutputStream os = exchange.getResponseBody()) {
                 os.write(fileContent);
             }
+        }
+        
+        /**
+         * 在所有分类文件夹下递归查找文件
+         */
+        private File findFileInAllCategories(String filename) {
+            File outputDir = new File(OUTPUT_DIR);
+            if (!outputDir.exists() || !outputDir.isDirectory()) {
+                return null;
+            }
+            
+            // 在所有子目录（包括分类文件夹）中查找文件
+            return findFileRecursively(outputDir, filename);
+        }
+        
+        /**
+         * 递归查找文件
+         */
+        private File findFileRecursively(File directory, String filename) {
+            if (!directory.exists() || !directory.isDirectory()) {
+                return null;
+            }
+            
+            File[] items = directory.listFiles();
+            if (items == null) {
+                return null;
+            }
+            
+            // 先在当前目录查找
+            for (File item : items) {
+                if (item.isFile() && item.getName().equals(filename)) {
+                    return item;
+                }
+            }
+            
+            // 递归在子目录中查找
+            for (File item : items) {
+                if (item.isDirectory()) {
+                    File found = findFileRecursively(item, filename);
+                    if (found != null) {
+                        return found;
+                    }
+                }
+            }
+            
+            return null;
         }
     }
     
@@ -376,5 +585,68 @@ public class WebServer {
         response.addProperty("success", false);
         response.addProperty("error", error);
         return response;
+    }
+    
+    /**
+     * 从简单示例中确定分类
+     */
+    private static ToolCategoryClassifier.ToolCategory determineCategoryFromSimpleExample(String userRequest) {
+        String requestLower = userRequest.trim().toLowerCase();
+        
+        // 根据简单示例类型确定分类
+        if (requestLower.contains("计算器") || requestLower.contains("calculator")) {
+            return ToolCategoryClassifier.ToolCategory.PROCESSING;
+        } else if (requestLower.contains("表格") || requestLower.contains("table")) {
+            return ToolCategoryClassifier.ToolCategory.PROCESSING;
+        } else if (requestLower.contains("文本替换") || requestLower.contains("replace")) {
+            return ToolCategoryClassifier.ToolCategory.PROCESSING;
+        } else if (requestLower.contains("json") || requestLower.contains("格式化")) {
+            return ToolCategoryClassifier.ToolCategory.PROCESSING;
+        } else if (requestLower.contains("数据转换") || requestLower.contains("data converter")) {
+            return ToolCategoryClassifier.ToolCategory.PROCESSING;
+        }
+        
+        // 默认使用处理工具分类
+        return ToolCategoryClassifier.ToolCategory.PROCESSING;
+    }
+    
+    /**
+     * 从已存在的文件中确定分类
+     * 通过查找文件所在的分类文件夹来判断
+     */
+    private static ToolCategoryClassifier.ToolCategory determineCategoryFromExistingFile(String userRequest) {
+        // 尝试在所有分类文件夹中查找匹配的文件
+        ToolCategoryClassifier.ToolCategory[] categories = ToolCategoryClassifier.ToolCategory.values();
+        for (ToolCategoryClassifier.ToolCategory category : categories) {
+            File categoryDir = new File(outputDir, category.getChineseName());
+            if (categoryDir.exists() && categoryDir.isDirectory()) {
+                // 生成可能的文件名
+                String generatedFilename = FilenameGenerator.generateFilename(userRequest);
+                // 确保文件名以.html结尾（创建final变量供lambda使用）
+                final String filename = generatedFilename.toLowerCase().endsWith(".html") 
+                    ? generatedFilename 
+                    : generatedFilename + ".html";
+                
+                // 检查该分类文件夹下是否有匹配的文件
+                File[] files = categoryDir.listFiles((dir, name) -> {
+                    // 检查文件名是否匹配（忽略时间戳）
+                    String cleanName = name.replaceAll("_\\d{8}_\\d{6}\\.html$", "").replaceAll("\\.html$", "");
+                    String cleanFilename = filename.replaceAll("_\\d{8}_\\d{6}\\.html$", "").replaceAll("\\.html$", "");
+                    return cleanName.equals(cleanFilename) || name.equals(filename);
+                });
+                
+                if (files != null && files.length > 0) {
+                    return category;
+                }
+            }
+        }
+        
+        // 如果找不到，使用规则匹配作为备用
+        try {
+            return categoryClassifier.classify(userRequest);
+        } catch (Exception e) {
+            // 如果分类也失败，返回默认分类
+            return ToolCategoryClassifier.ToolCategory.PROCESSING;
+        }
     }
 }

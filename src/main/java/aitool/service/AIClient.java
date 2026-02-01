@@ -19,6 +19,17 @@ public abstract class AIClient {
     public abstract String generateHtmlTool(String userRequest, String systemPrompt) throws Exception;
     
     /**
+     * 通用AI调用方法（不验证HTML格式，用于分类等场景）
+     * @param userRequest 用户请求
+     * @param systemPrompt 系统提示词
+     * @return AI返回的文本内容
+     */
+    public String generateText(String userRequest, String systemPrompt) throws Exception {
+        // 默认实现：直接调用generateHtmlTool（子类可以覆盖）
+        return generateHtmlTool(userRequest, systemPrompt);
+    }
+    
+    /**
      * 关闭客户端资源
      */
     public abstract void shutdown();
@@ -126,13 +137,29 @@ class DoubaoClient extends AIClient {
         }
         
         try {
-            return generateWithArkSdk(userRequest, systemPrompt);
+            String result = generateWithArkSdk(userRequest, systemPrompt);
+            // 对HTML生成场景，提取并清理HTML代码
+            return extractHtml(result);
         } catch (Exception e) {
             String errorMsg = e.getMessage();
             if (errorMsg == null || errorMsg.isEmpty()) {
                 errorMsg = "AI请求失败";
             }
             throw new Exception("AI生成失败: " + errorMsg, e);
+        }
+    }
+    
+    @Override
+    public String generateText(String userRequest, String systemPrompt) throws Exception {
+        // 对于文本生成（如分类），直接返回原始结果，不进行HTML提取
+        try {
+            return generateWithArkSdk(userRequest, systemPrompt);
+        } catch (Exception e) {
+            String errorMsg = e.getMessage();
+            if (errorMsg == null || errorMsg.isEmpty()) {
+                errorMsg = "AI请求失败";
+            }
+            throw new Exception("AI调用失败: " + errorMsg, e);
         }
     }
     

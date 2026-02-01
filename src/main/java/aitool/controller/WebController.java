@@ -3,6 +3,7 @@ package aitool.controller;
 import aitool.config.WebConfig;
 import aitool.service.FilenameGenerator;
 import aitool.service.HtmlGenerator;
+import aitool.service.ToolCategoryClassifier;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,19 +33,36 @@ public class WebController {
     
     private static final Logger logger = LoggerFactory.getLogger(WebController.class);
     private static final Gson gson = new Gson();
-    
+    private  int  shareValue = 1;
     @Autowired
     private HtmlGenerator htmlGenerator;
     
     @Autowired
     private WebConfig webConfig;
     
+    private ToolCategoryClassifier categoryClassifier;
+    
+    // 初始化分类器
+    @javax.annotation.PostConstruct
+    public void init() {
+        this.categoryClassifier = new ToolCategoryClassifier();
+        // 创建分类文件夹
+        createCategoryFolders();
+    }
+    
     /**
      * 生成工具API接口
      */
     @PostMapping("/api/generate")
     public ResponseEntity<String> generate(@RequestBody JsonObject request) {
+        System.out.println("start");
         try {
+            Thread.sleep(5000);
+            if (shareValue  == 1) {
+                Thread.sleep(1000);
+                shareValue++;
+                System.out.println(System.currentTimeMillis() + "值是" + shareValue);
+            }
             String userRequest = request.get("request").getAsString();
             
             if (userRequest == null || userRequest.trim().isEmpty()) {
@@ -52,8 +70,19 @@ public class WebController {
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(gson.toJson(createErrorResponse("请求不能为空")));
             }
+            // 逻辑1: 通过AI判断用户需求属于哪一类
+            logger.info("正在分析用户需求，进行分类...");
+            ToolCategoryClassifier.ToolCategory category;
+            try {
+                category = categoryClassifier.classify(userRequest);
+                logger.info("分类结果: " + category.getChineseName());
+            } catch (Exception e) {
+                logger.warn("分类失败: " + e.getMessage() + "，使用默认分类");
+                category = ToolCategoryClassifier.ToolCategory.PROCESSING; // 默认使用处理工具
+            }
             
-            // 生成HTML工具
+            // 逻辑2: 通过AI生成对应的HTML
+            logger.info("正在生成HTML工具...");
             String htmlContent = htmlGenerator.generateTool(userRequest);
             
             // 确保HTML内容有效
@@ -83,7 +112,16 @@ public class WebController {
                 }
             }
             
-            File filepath = new File(outputDir, filename);
+            // 根据分类结果，将文件保存到对应的分类文件夹
+            File categoryDir = new File(outputDir, category.getChineseName());
+            if (!categoryDir.exists()) {
+                boolean created = categoryDir.mkdirs();
+                if (!created) {
+                    throw new IOException("无法创建分类文件夹: " + categoryDir.getAbsolutePath());
+                }
+            }
+            
+            File filepath = new File(categoryDir, filename);
             
             // 保存文件（使用UTF-8编码避免乱码）
             Files.write(filepath.toPath(), htmlContent.getBytes(StandardCharsets.UTF_8));
@@ -101,6 +139,8 @@ public class WebController {
             response.addProperty("filename", filename);
             response.addProperty("filepath", filepath.getAbsolutePath());
             response.addProperty("htmlContent", htmlContent);
+            response.addProperty("category", category.getChineseName());
+            response.addProperty("categoryEn", category.getEnglishName());
             
             return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_JSON)
@@ -202,6 +242,25 @@ public class WebController {
         } catch (Exception e) {
             logger.error("获取文件列表失败", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+    
+    /**
+     * 创建4个分类文件夹
+     */
+    private void createCategoryFolders() {
+        File outputDir = webConfig.getOutputDir();
+        ToolCategoryClassifier.ToolCategory[] categories = ToolCategoryClassifier.ToolCategory.values();
+        for (ToolCategoryClassifier.ToolCategory category : categories) {
+            File categoryDir = new File(outputDir, category.getChineseName());
+            if (!categoryDir.exists()) {
+                boolean created = categoryDir.mkdirs();
+                if (created) {
+                    logger.info("已创建分类文件夹: " + category.getChineseName());
+                } else {
+                    logger.warn("无法创建分类文件夹: " + category.getChineseName());
+                }
+            }
         }
     }
     
