@@ -213,74 +213,39 @@ public class HtmlGenerator {
      * 通过文件名匹配查找已存在的文件（改进的逻辑，考虑功能差异）
      */
     private String findExistingFileByName(String userRequest) {
-        // 提取需求的关键词（用于匹配文件名）
-        String[] keywords = extractKeywords(userRequest);
-        if (keywords.length == 0) {
-            return null;
-        }
-        
-        // 检查用户需求是否包含高级功能关键词
-        boolean hasAdvancedFeatures = containsAdvancedFeatureKeywords(userRequest);
-        
         // 收集所有分类文件夹下的HTML文件
         java.util.List<File> allFiles = getAllHtmlFiles(outputDir);
         if (allFiles.isEmpty()) {
             return null;
         }
         
-        // 遍历文件，查找匹配的文件
-        // 优先返回最近匹配的文件（按修改时间排序，最新文件优先）
-        File bestMatch = null;
-        int bestMatchCount = 0;
+        // 新策略：只在“语义完全一致”时通过文件名直接命中
+        // 也就是说，仅当「归一化后的用户需求」与「归一化后的文件基础名」完全相等时，才认为是同一个工具
+        // 其他情况一律交给 AI 做更严格的语义判断，尽量避免误把新需求当成旧文件
+        String normalizedRequest = normalizeRequirementText(userRequest);
+        if (normalizedRequest.isEmpty()) {
+            return null;
+        }
         
         for (File file : allFiles) {
-            String filename = file.getName().toLowerCase();
+            String filename = file.getName();
+            // 去掉时间戳和后缀，只保留核心名称
+            String cleanName = filename.replaceAll("_\\d{8}_\\d{6}\\.html$", "").replaceAll("\\.html$", "");
+            String normalizedName = normalizeRequirementText(cleanName);
             
-            // 计算匹配的关键词数量
-            int matchCount = 0;
-            for (String keyword : keywords) {
-                if (filename.contains(keyword.toLowerCase())) {
-                    matchCount++;
-                }
-            }
-            
-            // 如果用户需求包含高级功能关键词，要求更严格的匹配
-            if (hasAdvancedFeatures) {
-                // 必须所有关键词都匹配，且文件名不能缺少关键功能词
-                if (matchCount == keywords.length) {
-                    // 检查文件名是否也包含高级功能关键词
-                    boolean filenameHasAdvanced = containsAdvancedFeatureKeywords(filename);
-                    if (filenameHasAdvanced) {
-                        // 文件名也包含高级功能关键词，认为是匹配的
-                        if (matchCount > bestMatchCount || (matchCount == bestMatchCount && file.lastModified() > (bestMatch != null ? bestMatch.lastModified() : 0))) {
-                            bestMatch = file;
-                            bestMatchCount = matchCount;
-                        }
-                    }
-                    // 如果文件名不包含高级功能关键词，即使所有关键词都匹配，也不认为是匹配的
-                }
-            } else {
-                // 普通匹配：如果匹配的关键词数量超过一半，或者所有关键词都匹配，则认为是匹配的
-                if (matchCount > 0 && (matchCount >= keywords.length / 2 || matchCount == keywords.length)) {
-                    if (matchCount > bestMatchCount || (matchCount == bestMatchCount && file.lastModified() > (bestMatch != null ? bestMatch.lastModified() : 0))) {
-                        bestMatch = file;
-                        bestMatchCount = matchCount;
-                    }
+            if (!normalizedName.isEmpty() && normalizedName.equals(normalizedRequest)) {
+                try {
+                    byte[] bytes = Files.readAllBytes(file.toPath());
+                    System.out.println("✓ 通过“完全等价”的文件名匹配找到已生成的文件");
+                    return new String(bytes, StandardCharsets.UTF_8);
+                } catch (IOException e) {
+                    System.err.println("读取已存在文件失败: " + file.getAbsolutePath());
+                    return null;
                 }
             }
         }
         
-        // 返回最佳匹配的文件内容
-        if (bestMatch != null) {
-            try {
-                byte[] bytes = Files.readAllBytes(bestMatch.toPath());
-                return new String(bytes, StandardCharsets.UTF_8);
-            } catch (IOException e) {
-                System.err.println("读取已存在文件失败: " + bestMatch.getAbsolutePath());
-                return null;
-            }
-        }
-        
+        // 如果没有找到语义完全一致的文件名，则认为是新需求，后续交给 AI 检验
         return null;
     }
     
@@ -341,16 +306,20 @@ public class HtmlGenerator {
                 "1. 只有当用户需求与某个文件名表达的意思完全相同，且功能要求也完全一致时，才认为已生成过\n" +
                 "2. 如果用户需求包含更高级、更具体的功能要求，即使文件名相似，也不能认为是匹配的\n" +
                 "   例如：\"科学计算器\"（需要三角函数等功能）与\"计算器\"（普通计算器）不匹配\n" +
+                "   \"支持MD5计算的工具\" 与 \"计算器\" 不匹配\n" +
                 "   \"高级文本编辑器\"与\"文本编辑器\"不匹配\n" +
                 "   \"支持正则表达式的文本替换工具\"与\"文本替换工具\"不匹配\n" +
-                "3. 如果用户需求包含以下关键词，需要更严格的匹配：\n" +
+                "3. 如果用户需求中新增了任何新的功能、动作或名词（例如：MD5、哈希、加密、导出、批量、图表、统计等），即使其他部分很相似，也要视为【新需求】而不是已生成过\n" +
+                "4. 如果用户需求包含以下关键词，需要更严格的匹配：\n" +
                 "   - 科学、高级、专业、增强、扩展、完整、全功能等表示更高级功能的词\n" +
                 "   - 三角函数、对数、指数、矩阵、统计等具体功能词\n" +
                 "   - 正则表达式、批量处理、多文件等高级特性词\n" +
-                "4. 只考虑文件名的核心含义，忽略时间戳等无关信息\n" +
-                "5. 如果找到完全匹配的文件，请只返回该文件的完整文件名（包含.html扩展名）\n" +
-                "6. 如果没有完全匹配的文件，请只返回\"无\"或\"none\"\n" +
-                "7. 只返回文件名，不要有其他说明文字\n\n" +
+                "5. 忽略礼貌或形式化的差异，例如：\"请帮我\"、\"帮我\"、\"请生成\"、\"生成一个\"、\"麻烦\"、\"提供\"、\"一下\"、\"工具\" 等，这些不影响是否是同一个功能\n" +
+                "6. 只考虑文件名的核心含义，忽略时间戳等无关信息\n" +
+                "7. 如果你不够确定两者是否完全等价，请优先选择【认为没有生成过】（也就是返回\"无\"），避免错把新需求当成旧文件\n" +
+                "8. 如果找到完全匹配的文件，请只返回该文件的完整文件名（包含.html扩展名）\n" +
+                "9. 如果没有完全匹配的文件，请只返回\"无\"或\"none\"\n" +
+                "10. 只返回文件名，不要有其他说明文字\n\n" +
                 "已生成的文件列表：\n" + fileListInfo.toString();
         
         String aiRequest = "用户需求：" + userRequest + "\n\n请严格按照上述规则判断是否有完全匹配的文件。\n" +
@@ -508,6 +477,38 @@ public class HtmlGenerator {
         }
         
         return keywords.toArray(new String[0]);
+    }
+    
+    /**
+     * 归一化需求/文件名文本：
+     * - 转小写
+     * - 去掉常见礼貌/无关前后缀（如“请帮我”“生成一个”“工具”等）
+     * - 去掉标点、多余空格
+     * 目的是：只保留真正影响功能语义的核心词汇，用于“完全等价”判断
+     */
+    private String normalizeRequirementText(String text) {
+        if (text == null) {
+            return "";
+        }
+        String result = text.toLowerCase().trim();
+        
+        // 去掉常见礼貌/形式化前缀和无关词
+        String[] noisePhrases = new String[] {
+            "请帮我", "帮我", "请生成", "请你", "请提供", "麻烦", "一下",
+            "生成一个", "生成", "创建一个", "创建",
+            "一个", "工具", "在线", "网页版", "web版"
+        };
+        for (String phrase : noisePhrases) {
+            result = result.replace(phrase, "");
+        }
+        
+        // 移除时间/日期类常见装饰（保险起见，再处理一次）
+        result = result.replaceAll("_\\d{8}_\\d{6}", "");
+        
+        // 去掉标点符号，统一空格
+        result = result.replaceAll("[\\p{Punct}“”‘’，。！？、]", " ");
+        result = result.replaceAll("\\s+", " ").trim();
+        return result;
     }
     
     /**
